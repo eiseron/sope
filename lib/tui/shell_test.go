@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/eiseron/sope/internal/model"
+	"github.com/eiseron/sope/lib/model"
 )
 
 func TestResolveShellPrefersSopeShell(t *testing.T) {

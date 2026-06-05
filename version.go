@@ -1,4 +1,4 @@
-package sope
+package main
 
 import (
 	_ "embed"
@@ -8,6 +8,6 @@ import (
 //go:embed VERSION
 var versionFile string
 
-func Version() string {
+func version() string {
 	return strings.TrimSpace(versionFile)
 }

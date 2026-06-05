@@ -4,7 +4,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/eiseron/sope/internal/model"
+	"github.com/eiseron/sope/lib/model"
 )
 
 type shellClosedMsg struct {

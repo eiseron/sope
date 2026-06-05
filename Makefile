@@ -6,7 +6,7 @@ tidy:
 	$(DEV) go mod tidy
 
 build:
-	$(DEV) go build -trimpath -o bin/sope ./cmd/sope
+	$(DEV) go build -trimpath -o bin/sope .
 
 test:
 	$(DEV) go test ./... -race
@@ -25,4 +25,4 @@ image:
 	docker build -t sope .
 
 install:
-	go install github.com/eiseron/sope/cmd/sope@latest
+	go install github.com/eiseron/sope@latest

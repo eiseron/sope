@@ -8,7 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/eiseron/sope/internal/model"
+	"github.com/eiseron/sope/lib/model"
 )
 
 const wrongIdentity = "AGE-SECRET-KEY-1ZTQAC48SV8D6V4AU9DJ97ZJ28VFKHA589F54QJA60G0DUW5XE2HQ8TS63Q"

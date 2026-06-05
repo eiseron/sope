@@ -30,7 +30,7 @@ the interactive browse-and-edit case those binaries do not cover.
 ## Install
 
 ```sh
-go install github.com/eiseron/sope/cmd/sope@latest
+go install github.com/eiseron/sope@latest
 ```
 
 Or download a prebuilt binary from the Releases page, or run the image:

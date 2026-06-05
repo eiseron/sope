@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eiseron/sope/internal/model"
+	"github.com/eiseron/sope/lib/model"
 )
 
 func TestE2EShellExportsSecretsToSubprocess(t *testing.T) {

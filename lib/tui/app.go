@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/eiseron/sope/internal/model"
+	"github.com/eiseron/sope/lib/model"
 )
 
 type screen int

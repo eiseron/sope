@@ -9,15 +9,14 @@ import (
 	"github.com/getsops/sops/v3/logging"
 	"github.com/sirupsen/logrus"
 
-	"github.com/eiseron/sope"
-	"github.com/eiseron/sope/internal/tui"
+	"github.com/eiseron/sope/lib/tui"
 )
 
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "-v", "--version", "version":
-			fmt.Println(sope.Version())
+			fmt.Println(version())
 			return
 		}
 	}
