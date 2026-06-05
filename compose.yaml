@@ -1,0 +1,15 @@
+name: sope
+
+services:
+  dev:
+    image: golang:1.25
+    working_dir: /src
+    environment:
+      GOFLAGS: -mod=mod -buildvcs=false
+      GOTOOLCHAIN: local
+    volumes:
+      - .:/src
+      - go-cache:/go
+
+volumes:
+  go-cache:

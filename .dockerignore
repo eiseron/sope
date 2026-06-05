@@ -1,0 +1,12 @@
+.git
+.gitignore
+bin
+dist
+.claude
+*_test.go
+**/testdata
+README.md
+compose.yaml
+Makefile
+.goreleaser.yaml
+.gitlab-ci.yml

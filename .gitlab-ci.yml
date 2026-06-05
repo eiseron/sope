@@ -1,0 +1,56 @@
+include:
+  - project: eiseron/stack/ci
+    file: /templates/go.yml
+    ref: v0.1.9
+  - project: eiseron/stack/ci
+    file: /templates/release.yml
+    ref: v0.1.9
+  - project: eiseron/stack/ci
+    file: /templates/sync-github.yml
+    ref: v0.1.9
+
+stages:
+  - lint
+  - test
+  - release
+  - build
+  - sync
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+
+default:
+  tags:
+    - self-hosted
+
+build-image:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:v1.21.1-debug
+    entrypoint: [""]
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  script:
+    - AUTH_B64=$(printf "%s:%s" "gitlab-ci-token" "$CI_JOB_TOKEN" | base64 | tr -d '\n')
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$AUTH_B64\"}}}" > /kaniko/.docker/config.json
+    - >-
+      /kaniko/executor
+      --context "$CI_PROJECT_DIR"
+      --dockerfile "$CI_PROJECT_DIR/Dockerfile"
+      --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+      --destination "$CI_REGISTRY_IMAGE:latest"
+      --push-retry=3
+
+binaries:
+  stage: build
+  image: goreleaser/goreleaser:latest
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  variables:
+    GITLAB_TOKEN: $EISERON_STACK_TOKEN
+  script:
+    - goreleaser release --clean
