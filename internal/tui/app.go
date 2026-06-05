@@ -19,6 +19,8 @@ const (
 	screenUnlock
 	screenKeys
 	screenEdit
+	screenAdd
+	screenDelete
 )
 
 type Model struct {
@@ -40,6 +42,7 @@ type Model struct {
 	keyCur    int
 	revealed  map[int]bool
 	editInput textinput.Model
+	addInput  textinput.Model
 
 	status string
 	width  int
@@ -54,12 +57,15 @@ func New(root string) (Model, error) {
 	ti := textinput.New()
 	ti.EchoMode = textinput.EchoPassword
 	ti.Placeholder = "AGE-SECRET-KEY-1..."
+	add := textinput.New()
+	add.Placeholder = "KEY=value"
 	return Model{
 		root:      root,
 		keyring:   model.NewKeyring(),
 		files:     files,
 		input:     ti,
 		editInput: textinput.New(),
+		addInput:  add,
 		revealed:  map[int]bool{},
 	}, nil
 }
@@ -83,6 +89,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateKeys(msg)
 		case screenEdit:
 			return m.updateEdit(msg)
+		case screenAdd:
+			return m.updateAdd(msg)
+		case screenDelete:
+			return m.updateDelete(msg)
 		}
 	}
 	return m, nil
@@ -150,6 +160,17 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.screen = screenEdit
 			return m, textinput.Blink
 		}
+	case "a":
+		m.addInput.Reset()
+		m.addInput.Focus()
+		m.status = ""
+		m.screen = screenAdd
+		return m, textinput.Blink
+	case "d":
+		if len(m.entries) > 0 {
+			m.status = ""
+			m.screen = screenDelete
+		}
 	}
 	return m, nil
 }
@@ -163,19 +184,79 @@ func (m Model) updateEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = screenKeys
 		return m, nil
 	case "enter":
-		return m.saveEdit(), nil
+		edited := make([]model.Entry, len(m.entries))
+		copy(edited, m.entries)
+		edited[m.keyCur].Value = m.editInput.Value()
+		m.editInput.Reset()
+		return m.persist(edited, m.keyCur, "saved "+edited[m.keyCur].Key), nil
 	}
 	var cmd tea.Cmd
 	m.editInput, cmd = m.editInput.Update(msg)
 	return m, cmd
 }
 
-func (m Model) saveEdit() Model {
-	edited := make([]model.Entry, len(m.entries))
-	copy(edited, m.entries)
-	edited[m.keyCur].Value = m.editInput.Value()
+func (m Model) updateAdd(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.addInput.Reset()
+		m.screen = screenKeys
+		return m, nil
+	case "enter":
+		return m.saveAdd(), nil
+	}
+	var cmd tea.Cmd
+	m.addInput, cmd = m.addInput.Update(msg)
+	return m, cmd
+}
 
-	ct, err := m.keyring.EncryptFile(m.currentCT, edited, time.Now())
+func (m Model) updateDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "y":
+		removed := m.entries[m.keyCur].Key
+		next := make([]model.Entry, 0, len(m.entries)-1)
+		next = append(next, m.entries[:m.keyCur]...)
+		next = append(next, m.entries[m.keyCur+1:]...)
+		cur := m.keyCur
+		if cur >= len(next) {
+			cur = len(next) - 1
+		}
+		if cur < 0 {
+			cur = 0
+		}
+		return m.persist(next, cur, "deleted "+removed), nil
+	default:
+		m.screen = screenKeys
+	}
+	return m, nil
+}
+
+func (m Model) saveAdd() Model {
+	raw := m.addInput.Value()
+	eq := strings.IndexByte(raw, '=')
+	if eq <= 0 {
+		m.status = "expected KEY=value"
+		return m
+	}
+	key, value := raw[:eq], raw[eq+1:]
+	if err := model.ValidateKey(key); err != nil {
+		m.status = err.Error()
+		return m
+	}
+	if model.HasKey(m.entries, key) {
+		m.status = "key already exists: " + key
+		return m
+	}
+	next := append(append([]model.Entry{}, m.entries...), model.Entry{Key: key, Value: value})
+	m.addInput.Reset()
+	return m.persist(next, len(next)-1, "added "+key)
+}
+
+func (m Model) persist(entries []model.Entry, cursor int, status string) Model {
+	ct, err := m.keyring.EncryptFile(m.currentCT, entries, time.Now())
 	if err != nil {
 		m.status = "error: " + err.Error()
 		m.screen = screenKeys
@@ -186,10 +267,10 @@ func (m Model) saveEdit() Model {
 		m.screen = screenKeys
 		return m
 	}
-	m.entries = edited
+	m.entries = entries
 	m.currentCT = ct
-	m.editInput.Reset()
-	m.status = "saved " + edited[m.keyCur].Key
+	m.keyCur = cursor
+	m.status = status
 	m.screen = screenKeys
 	return m
 }
@@ -251,6 +332,10 @@ func (m Model) View() string {
 		return m.viewKeys()
 	case screenEdit:
 		return m.viewEdit()
+	case screenAdd:
+		return m.viewAdd()
+	case screenDelete:
+		return m.viewDelete()
 	default:
 		return m.viewFiles()
 	}
@@ -304,7 +389,7 @@ func (m Model) viewKeys() string {
 	if m.status != "" {
 		b.WriteString("\n" + helpStyle.Render(m.status) + "\n")
 	}
-	b.WriteString("\n" + helpStyle.Render("j/k move · r reveal · e edit · esc back · q quit"))
+	b.WriteString("\n" + helpStyle.Render("j/k move · r reveal · e edit · a add · d delete · esc back · q quit"))
 	return b.String()
 }
 
@@ -313,5 +398,24 @@ func (m Model) viewEdit() string {
 	b.WriteString(titleStyle.Render("edit "+m.entries[m.keyCur].Key) + "\n\n")
 	b.WriteString(m.editInput.View() + "\n")
 	b.WriteString("\n" + helpStyle.Render("enter save · esc cancel"))
+	return b.String()
+}
+
+func (m Model) viewAdd() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("add key") + "\n\n")
+	b.WriteString(m.addInput.View() + "\n")
+	if m.status != "" {
+		b.WriteString("\n" + errStyle.Render(m.status) + "\n")
+	}
+	b.WriteString("\n" + helpStyle.Render("enter save · esc cancel"))
+	return b.String()
+}
+
+func (m Model) viewDelete() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("delete "+m.entries[m.keyCur].Key) + "\n\n")
+	b.WriteString("delete this key? ")
+	b.WriteString("\n" + helpStyle.Render("y delete · any other key cancel"))
 	return b.String()
 }

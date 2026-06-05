@@ -213,3 +213,122 @@ func TestEditCancelLeavesValueUnchanged(t *testing.T) {
 		t.Fatalf("cancel must not change the value: got %q, want %q", m.entries[0].Value, original)
 	}
 }
+
+func diskEntries(t *testing.T, root string, sf model.SecretFile) []model.Entry {
+	t.Helper()
+	k := model.NewKeyring()
+	if err := k.Unlock(identity(t)); err != nil {
+		t.Fatalf("unlock: %v", err)
+	}
+	ct, err := model.ReadCiphertext(root, sf)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	entries, err := k.DecryptFile(ct)
+	if err != nil {
+		t.Fatalf("decrypt: %v", err)
+	}
+	return entries
+}
+
+func TestAddKeyPersistsToDisk(t *testing.T) {
+	root := tempRoot(t)
+	m := unlockedAt(t, root)
+
+	m = step(t, m, key('a'))
+	if m.screen != screenAdd {
+		t.Fatalf("'a' should open the add prompt, got screen %v", m.screen)
+	}
+	m.addInput.SetValue("NEW_KEY=fresh-value")
+	m = step(t, m, enter())
+
+	if m.screen != screenKeys {
+		t.Fatalf("saving an added key should return to the key view, got screen %v", m.screen)
+	}
+	if !model.HasKey(m.entries, "NEW_KEY") {
+		t.Fatalf("added key not present in memory: %#v", m.entries)
+	}
+
+	entries := diskEntries(t, root, m.files[0])
+	if !model.HasKey(entries, "NEW_KEY") {
+		t.Fatalf("added key not persisted to disk: %#v", entries)
+	}
+}
+
+func TestAddRejectsInvalidKey(t *testing.T) {
+	root := tempRoot(t)
+	m := unlockedAt(t, root)
+	before := len(m.entries)
+
+	m = step(t, m, key('a'))
+	m.addInput.SetValue("1INVALID=x")
+	m = step(t, m, enter())
+
+	if m.screen != screenAdd {
+		t.Fatalf("an invalid key must keep the add prompt, got screen %v", m.screen)
+	}
+	if m.status == "" {
+		t.Fatal("expected an error status for an invalid key")
+	}
+	if len(m.entries) != before {
+		t.Fatalf("entry count changed on a rejected add: %d -> %d", before, len(m.entries))
+	}
+}
+
+func TestAddRejectsDuplicateKey(t *testing.T) {
+	root := tempRoot(t)
+	m := unlockedAt(t, root)
+	existing := m.entries[0].Key
+
+	m = step(t, m, key('a'))
+	m.addInput.SetValue(existing + "=other")
+	m = step(t, m, enter())
+
+	if m.screen != screenAdd {
+		t.Fatalf("a duplicate key must keep the add prompt, got screen %v", m.screen)
+	}
+	if m.status == "" {
+		t.Fatal("expected an error status for a duplicate key")
+	}
+}
+
+func TestDeleteKeyPersistsToDisk(t *testing.T) {
+	root := tempRoot(t)
+	m := unlockedAt(t, root)
+	removed := m.entries[0].Key
+	before := len(m.entries)
+
+	m = step(t, m, key('d'))
+	if m.screen != screenDelete {
+		t.Fatalf("'d' should open the delete confirm, got screen %v", m.screen)
+	}
+	m = step(t, m, key('y'))
+
+	if m.screen != screenKeys {
+		t.Fatalf("confirming delete should return to the key view, got screen %v", m.screen)
+	}
+	if len(m.entries) != before-1 || model.HasKey(m.entries, removed) {
+		t.Fatalf("key not removed in memory: %#v", m.entries)
+	}
+
+	entries := diskEntries(t, root, m.files[0])
+	if model.HasKey(entries, removed) {
+		t.Fatalf("deleted key still on disk: %#v", entries)
+	}
+}
+
+func TestDeleteCancelKeepsKey(t *testing.T) {
+	root := tempRoot(t)
+	m := unlockedAt(t, root)
+	before := len(m.entries)
+
+	m = step(t, m, key('d'))
+	m = step(t, m, key('n'))
+
+	if m.screen != screenKeys {
+		t.Fatalf("a non-y key should cancel and return to keys, got screen %v", m.screen)
+	}
+	if len(m.entries) != before {
+		t.Fatalf("cancel must not delete: %d -> %d", before, len(m.entries))
+	}
+}

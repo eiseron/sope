@@ -3,14 +3,40 @@ package model
 import (
 	"bufio"
 	"bytes"
+	"fmt"
+	"regexp"
 	"strings"
 )
 
 const sopsMetaPrefix = "sops_"
 
+var keyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 type Entry struct {
 	Key   string
 	Value string
+}
+
+func ValidateKey(name string) error {
+	if name == "" {
+		return fmt.Errorf("key must not be empty")
+	}
+	if strings.HasPrefix(name, sopsMetaPrefix) {
+		return fmt.Errorf("key must not start with %q", sopsMetaPrefix)
+	}
+	if !keyPattern.MatchString(name) {
+		return fmt.Errorf("key %q must match [A-Za-z_][A-Za-z0-9_]*", name)
+	}
+	return nil
+}
+
+func HasKey(entries []Entry, name string) bool {
+	for _, e := range entries {
+		if e.Key == name {
+			return true
+		}
+	}
+	return false
 }
 
 func parseDotenv(data []byte) []Entry {
