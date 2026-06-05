@@ -1,13 +1,13 @@
 include:
   - project: eiseron/stack/ci
     file: /templates/go.yml
-    ref: v0.1.12
+    ref: v0.1.13
   - project: eiseron/stack/ci
     file: /templates/release.yml
-    ref: v0.1.12
+    ref: v0.1.13
   - project: eiseron/stack/ci
     file: /templates/sync-github.yml
-    ref: v0.1.12
+    ref: v0.1.13
 
 stages:
   - lint
@@ -28,7 +28,7 @@ default:
 
 integration:
   stage: test
-  image: golang:1.25
+  image: registry.gitlab.com/eiseron/stack/public-image-bases/go-tools:v0.1.7
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
@@ -43,8 +43,6 @@ integration:
           - go.sum
       paths:
         - .cache/
-  before_script:
-    - sh scripts/install-sops-age.sh
   script:
     - go test -tags=integration ./...
 
