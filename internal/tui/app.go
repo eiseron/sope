@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,6 +18,7 @@ const (
 	screenFiles screen = iota
 	screenUnlock
 	screenKeys
+	screenEdit
 )
 
 type Model struct {
@@ -32,10 +34,12 @@ type Model struct {
 	pendingCT []byte
 	unlockErr string
 
-	current  model.SecretFile
-	entries  []model.Entry
-	keyCur   int
-	revealed map[int]bool
+	current   model.SecretFile
+	currentCT []byte
+	entries   []model.Entry
+	keyCur    int
+	revealed  map[int]bool
+	editInput textinput.Model
 
 	status string
 	width  int
@@ -51,11 +55,12 @@ func New(root string) (Model, error) {
 	ti.EchoMode = textinput.EchoPassword
 	ti.Placeholder = "AGE-SECRET-KEY-1..."
 	return Model{
-		root:     root,
-		keyring:  model.NewKeyring(),
-		files:    files,
-		input:    ti,
-		revealed: map[int]bool{},
+		root:      root,
+		keyring:   model.NewKeyring(),
+		files:     files,
+		input:     ti,
+		editInput: textinput.New(),
+		revealed:  map[int]bool{},
 	}, nil
 }
 
@@ -76,6 +81,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateUnlock(msg)
 		case screenKeys:
 			return m.updateKeys(msg)
+		case screenEdit:
+			return m.updateEdit(msg)
 		}
 	}
 	return m, nil
@@ -134,8 +141,57 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "r", " ":
 		m.revealed[m.keyCur] = !m.revealed[m.keyCur]
+	case "e":
+		if len(m.entries) > 0 {
+			m.editInput.SetValue(m.entries[m.keyCur].Value)
+			m.editInput.CursorEnd()
+			m.editInput.Focus()
+			m.status = ""
+			m.screen = screenEdit
+			return m, textinput.Blink
+		}
 	}
 	return m, nil
+}
+
+func (m Model) updateEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.editInput.Reset()
+		m.screen = screenKeys
+		return m, nil
+	case "enter":
+		return m.saveEdit(), nil
+	}
+	var cmd tea.Cmd
+	m.editInput, cmd = m.editInput.Update(msg)
+	return m, cmd
+}
+
+func (m Model) saveEdit() Model {
+	edited := make([]model.Entry, len(m.entries))
+	copy(edited, m.entries)
+	edited[m.keyCur].Value = m.editInput.Value()
+
+	ct, err := m.keyring.EncryptFile(m.currentCT, edited, time.Now())
+	if err != nil {
+		m.status = "error: " + err.Error()
+		m.screen = screenKeys
+		return m
+	}
+	if err := model.WriteCiphertext(m.root, m.current, ct); err != nil {
+		m.status = "error: " + err.Error()
+		m.screen = screenKeys
+		return m
+	}
+	m.entries = edited
+	m.currentCT = ct
+	m.editInput.Reset()
+	m.status = "saved " + edited[m.keyCur].Key
+	m.screen = screenKeys
+	return m
 }
 
 func (m Model) openFile(sf model.SecretFile) Model {
@@ -156,7 +212,7 @@ func (m Model) openFile(sf model.SecretFile) Model {
 	case err != nil:
 		m.status = "error: " + err.Error()
 	default:
-		m = m.withKeys(sf, entries)
+		m = m.withKeys(sf, ct, entries)
 	}
 	return m
 }
@@ -173,11 +229,12 @@ func (m Model) submitUnlock() Model {
 	}
 	m.input.Reset()
 	m.unlockErr = ""
-	return m.withKeys(m.pending, entries)
+	return m.withKeys(m.pending, m.pendingCT, entries)
 }
 
-func (m Model) withKeys(sf model.SecretFile, entries []model.Entry) Model {
+func (m Model) withKeys(sf model.SecretFile, ct []byte, entries []model.Entry) Model {
 	m.current = sf
+	m.currentCT = ct
 	m.entries = entries
 	m.keyCur = 0
 	m.revealed = map[int]bool{}
@@ -192,6 +249,8 @@ func (m Model) View() string {
 		return m.viewUnlock()
 	case screenKeys:
 		return m.viewKeys()
+	case screenEdit:
+		return m.viewEdit()
 	default:
 		return m.viewFiles()
 	}
@@ -242,6 +301,17 @@ func (m Model) viewKeys() string {
 		}
 		b.WriteString(fmt.Sprintf("%s%s = %s\n", cursor, e.Key, value))
 	}
-	b.WriteString("\n" + helpStyle.Render("j/k move · r reveal · esc back · q quit"))
+	if m.status != "" {
+		b.WriteString("\n" + helpStyle.Render(m.status) + "\n")
+	}
+	b.WriteString("\n" + helpStyle.Render("j/k move · r reveal · e edit · esc back · q quit"))
+	return b.String()
+}
+
+func (m Model) viewEdit() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("edit "+m.entries[m.keyCur].Key) + "\n\n")
+	b.WriteString(m.editInput.View() + "\n")
+	b.WriteString("\n" + helpStyle.Render("enter save · esc cancel"))
 	return b.String()
 }

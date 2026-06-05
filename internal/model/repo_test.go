@@ -82,6 +82,37 @@ func TestReadCiphertextRejectsPathOutsideRoot(t *testing.T) {
 	}
 }
 
+func TestWriteCiphertextOnlyTouchesTarget(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "a.enc.env")
+	other := filepath.Join(root, "b.enc.env")
+	writeFile(t, target, "OLD=ENC\n")
+	writeFile(t, other, "KEEP=ENC\n")
+
+	if err := WriteCiphertext(root, SecretFile{Abs: target, Rel: "a.enc.env"}, []byte("NEW=ENC\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if data, _ := os.ReadFile(target); string(data) != "NEW=ENC\n" {
+		t.Fatalf("target not updated: %q", data)
+	}
+	if data, _ := os.ReadFile(other); string(data) != "KEEP=ENC\n" {
+		t.Fatalf("a sibling file was modified: %q", data)
+	}
+	if entries, _ := os.ReadDir(root); len(entries) != 2 {
+		t.Fatalf("expected no extra temp files, got %d entries", len(entries))
+	}
+}
+
+func TestWriteCiphertextRejectsPathOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "x.enc.env")
+
+	if err := WriteCiphertext(root, SecretFile{Abs: outside}, []byte("X")); err == nil {
+		t.Fatal("expected WriteCiphertext to refuse a path outside root")
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

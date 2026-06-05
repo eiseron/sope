@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/eiseron/sope/internal/model"
 )
 
 const wrongIdentity = "AGE-SECRET-KEY-1ZTQAC48SV8D6V4AU9DJ97ZJ28VFKHA589F54QJA60G0DUW5XE2HQ8TS63Q"
@@ -28,6 +30,36 @@ func newModel(t *testing.T) Model {
 	m, err := New("testdata")
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
+	}
+	return m
+}
+
+func tempRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, name := range []string{".sops.yaml", "secrets.enc.env", "secrets2.enc.env"} {
+		data, err := os.ReadFile(filepath.Join("testdata", name))
+		if err != nil {
+			t.Fatalf("reading fixture %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(root, name), data, 0o644); err != nil {
+			t.Fatalf("writing fixture %s: %v", name, err)
+		}
+	}
+	return root
+}
+
+func unlockedAt(t *testing.T, root string) Model {
+	t.Helper()
+	m, err := New(root)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	m = step(t, m, enter())
+	m.input.SetValue(identity(t))
+	m = step(t, m, enter())
+	if m.screen != screenKeys {
+		t.Fatalf("setup: expected key view after unlock, got %v", m.screen)
 	}
 	return m
 }
@@ -126,5 +158,58 @@ func TestSecondFileWithSameRecipientSkipsUnlock(t *testing.T) {
 	}
 	if m.current.Rel != m.files[1].Rel {
 		t.Fatalf("expected to be viewing the second file %q, got %q", m.files[1].Rel, m.current.Rel)
+	}
+}
+
+func TestEditSavesValueAndPersistsToDisk(t *testing.T) {
+	root := tempRoot(t)
+	m := unlockedAt(t, root)
+	editedKey := m.entries[0].Key
+
+	m = step(t, m, key('e'))
+	if m.screen != screenEdit {
+		t.Fatalf("'e' should open the edit prompt, got screen %v", m.screen)
+	}
+	m.editInput.SetValue("rotated")
+	m = step(t, m, enter())
+
+	if m.screen != screenKeys {
+		t.Fatalf("saving should return to the key view, got screen %v", m.screen)
+	}
+	if m.entries[0].Value != "rotated" {
+		t.Fatalf("in-memory value not updated: %q", m.entries[0].Value)
+	}
+
+	fresh := model.NewKeyring()
+	if err := fresh.Unlock(identity(t)); err != nil {
+		t.Fatalf("unlock fresh keyring: %v", err)
+	}
+	ct, err := model.ReadCiphertext(root, m.files[0])
+	if err != nil {
+		t.Fatalf("read saved file: %v", err)
+	}
+	entries, err := fresh.DecryptFile(ct)
+	if err != nil {
+		t.Fatalf("decrypt saved file: %v", err)
+	}
+	if entries[0].Key != editedKey || entries[0].Value != "rotated" {
+		t.Fatalf("disk does not reflect the edit: %#v", entries[0])
+	}
+}
+
+func TestEditCancelLeavesValueUnchanged(t *testing.T) {
+	root := tempRoot(t)
+	m := unlockedAt(t, root)
+	original := m.entries[0].Value
+
+	m = step(t, m, key('e'))
+	m.editInput.SetValue("should-not-stick")
+	m = step(t, m, esc())
+
+	if m.screen != screenKeys {
+		t.Fatalf("esc should return to the key view, got screen %v", m.screen)
+	}
+	if m.entries[0].Value != original {
+		t.Fatalf("cancel must not change the value: got %q, want %q", m.entries[0].Value, original)
 	}
 }

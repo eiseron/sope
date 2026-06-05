@@ -64,6 +64,17 @@ func ReadCiphertext(root string, sf SecretFile) ([]byte, error) {
 	return os.ReadFile(sf.Abs)
 }
 
+func WriteCiphertext(root string, sf SecretFile, data []byte) error {
+	if !isWithin(root, sf.Abs) {
+		return fmt.Errorf("refusing to write path outside root: %s", sf.Abs)
+	}
+	mode := os.FileMode(0o600)
+	if info, err := os.Stat(sf.Abs); err == nil {
+		mode = info.Mode().Perm()
+	}
+	return os.WriteFile(sf.Abs, data, mode)
+}
+
 func collectRules(root string) ([]creationRule, error) {
 	var rules []creationRule
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
