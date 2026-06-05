@@ -1,13 +1,13 @@
 include:
   - project: eiseron/stack/ci
     file: /templates/go.yml
-    ref: v0.1.9
+    ref: v0.1.12
   - project: eiseron/stack/ci
     file: /templates/release.yml
-    ref: v0.1.9
+    ref: v0.1.12
   - project: eiseron/stack/ci
     file: /templates/sync-github.yml
-    ref: v0.1.9
+    ref: v0.1.12
 
 stages:
   - lint
@@ -25,6 +25,28 @@ workflow:
 default:
   tags:
     - self-hosted
+
+integration:
+  stage: test
+  image: golang:1.25
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  variables:
+    GOTOOLCHAIN: local
+    GOFLAGS: -buildvcs=false
+    GOMODCACHE: $CI_PROJECT_DIR/.cache/go-mod
+    GOCACHE: $CI_PROJECT_DIR/.cache/go-build
+  cache:
+    - key:
+        files:
+          - go.sum
+      paths:
+        - .cache/
+  before_script:
+    - sh scripts/install-sops-age.sh
+  script:
+    - go test -tags=integration ./...
 
 build-image:
   stage: build
