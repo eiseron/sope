@@ -60,8 +60,27 @@ root. Open a file, paste your `AGE-SECRET-KEY-1...` into the unlock prompt, and
 the keys appear. A second file with the same recipient opens without asking
 again.
 
-Keys: `j`/`k` move, `enter` open, `r` reveal the selected value, `esc` go back,
-`q` quit.
+Keys: `j`/`k` move, `enter` open, `r` reveal, `e` edit, `a` add, `d` delete,
+`s` shell, `esc` go back, `q` quit.
+
+## Shell with the secrets loaded
+
+From an open file, `s` drops you into a subshell with that file's keys exported
+as environment variables. It runs `$SHELL` (override with `SOPE_SHELL`, falling
+back to `/bin/sh`). The variables live only in that subprocess, on top of your
+normal environment; when the shell exits you return to `sope` and they are gone.
+They are never set in `sope`'s own environment.
+
+On entry it prints a banner, and `SOPE_FILE` holds the loaded file's path so you
+know you are inside a `sope` shell and which file it carries.
+
+```sh
+# sope: ops/secrets.enc.env loaded, exit to return
+echo "$SOPE_FILE"     # ops/secrets.enc.env
+terraform plan        # TF_VAR_* are already set
+echo "$DATABASE_URL"  # available here only
+exit                  # back to sope; the variables are gone
+```
 
 ## Development
 

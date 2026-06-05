@@ -71,3 +71,11 @@ func formatDotenv(entries []Entry) []byte {
 	}
 	return b.Bytes()
 }
+
+func EnvStrings(entries []Entry) []string {
+	env := make([]string, 0, len(entries))
+	for _, e := range entries {
+		env = append(env, e.Key+"="+e.Value)
+	}
+	return env
+}

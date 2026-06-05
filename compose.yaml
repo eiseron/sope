@@ -7,6 +7,7 @@ services:
     environment:
       GOFLAGS: -mod=mod -buildvcs=false
       GOTOOLCHAIN: local
+      SHELL: /bin/bash
     volumes:
       - .:/src
       - go-cache:/go

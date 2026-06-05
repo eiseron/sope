@@ -79,6 +79,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
+	case shellClosedMsg:
+		m.status = "shell closed"
+		if msg.err != nil {
+			m.status = "shell error: " + msg.err.Error()
+		}
+		return m, nil
 	case tea.KeyMsg:
 		switch m.screen {
 		case screenFiles:
@@ -170,6 +176,13 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.entries) > 0 {
 			m.status = ""
 			m.screen = screenDelete
+		}
+	case "s":
+		if len(m.entries) > 0 {
+			cmd := buildShellCmd(resolveShell(), m.current.Rel, m.entries)
+			return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+				return shellClosedMsg{err: err}
+			})
 		}
 	}
 	return m, nil
@@ -389,7 +402,7 @@ func (m Model) viewKeys() string {
 	if m.status != "" {
 		b.WriteString("\n" + helpStyle.Render(m.status) + "\n")
 	}
-	b.WriteString("\n" + helpStyle.Render("j/k move · r reveal · e edit · a add · d delete · esc back · q quit"))
+	b.WriteString("\n" + helpStyle.Render("j/k move · r reveal · e edit · a add · d delete · s shell · esc back · q quit"))
 	return b.String()
 }
 

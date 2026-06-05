@@ -60,6 +60,17 @@ func TestParseDotenvIgnoresLineWithoutEquals(t *testing.T) {
 	}
 }
 
+func TestEnvStringsRendersKeyEqualsValue(t *testing.T) {
+	entries := []Entry{{Key: "A", Value: "1"}, {Key: "B", Value: "x=y"}}
+
+	got := EnvStrings(entries)
+
+	want := []string{"A=1", "B=x=y"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("EnvStrings mismatch\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
 func TestFormatDotenvRoundTripsThroughParse(t *testing.T) {
 	entries := []Entry{
 		{Key: "A", Value: "1"},
