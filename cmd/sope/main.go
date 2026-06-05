@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/getsops/sops/v3/logging"
@@ -23,10 +24,7 @@ func main() {
 
 	logging.SetLevel(logrus.PanicLevel)
 
-	root := os.Getenv("SECRETS_ROOT")
-	if root == "" {
-		root = "."
-	}
+	root := resolveRoot(os.Args[1:])
 
 	m, err := tui.New(root)
 	if err != nil {
@@ -38,4 +36,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+func resolveRoot(args []string) string {
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			return arg
+		}
+	}
+	if env := os.Getenv("SECRETS_ROOT"); env != "" {
+		return env
+	}
+	return "."
 }

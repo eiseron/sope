@@ -36,13 +36,22 @@ go install github.com/eiseron/sope/cmd/sope@latest
 Or download a prebuilt binary from the Releases page, or run the image:
 
 ```sh
-docker run --rm -it -v "$PWD:/work" -e SECRETS_ROOT=/work \
+docker run --rm -it -v "$PWD:/work" -w /work \
   registry.gitlab.com/eiseron/stack/sope:latest
 ```
 
 ## Usage
 
+By default `sope` searches the current directory:
+
 ```sh
+cd /path/to/repos && sope
+```
+
+You can point it elsewhere with a positional path, or with `SECRETS_ROOT`:
+
+```sh
+sope /path/to/repos
 SECRETS_ROOT=/path/to/repos sope
 ```
 
