@@ -67,10 +67,13 @@ build-image:
 
 binaries:
   stage: build
-  image: goreleaser/goreleaser:latest
+  image:
+    name: goreleaser/goreleaser:v2.16.0
+    entrypoint: [""]
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
   variables:
     GITLAB_TOKEN: $EISERON_STACK_TOKEN
+    GIT_DEPTH: "0"
   script:
     - goreleaser release --clean
