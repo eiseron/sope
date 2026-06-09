@@ -99,3 +99,38 @@ func TestIntegrationSopsCLIRoundTrip(t *testing.T) {
 		t.Errorf("untouched value changed: %q", got["DATABASE_URL"])
 	}
 }
+
+func TestIntegrationCreateFileReadableBySopsCLI(t *testing.T) {
+	dir := t.TempDir()
+	keyFile := filepath.Join(dir, "keys.txt")
+	run(t, dir, nil, "age-keygen", "-o", keyFile)
+	recipient := strings.TrimSpace(run(t, dir, nil, "age-keygen", "-y", keyFile))
+
+	entries := []Entry{
+		{Key: "DATABASE_URL", Value: "postgres://u:p@h:5432/db"},
+		{Key: "TOKEN", Value: "born-in-sope"},
+	}
+	now := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+	ct, err := CreateFile([]string{recipient}, entries, now)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	encPath := filepath.Join(dir, "secrets.enc.env")
+	if err := os.WriteFile(encPath, ct, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ageEnv := []string{"SOPS_AGE_KEY_FILE=" + keyFile}
+	decrypted := run(t, dir, ageEnv, "sops", "-d", "--input-type", "dotenv", "--output-type", "dotenv", encPath)
+	got := map[string]string{}
+	for _, e := range parseDotenv([]byte(decrypted)) {
+		got[e.Key] = e.Value
+	}
+
+	if got["TOKEN"] != "born-in-sope" {
+		t.Errorf("created value not seen by the sops CLI: %q", got["TOKEN"])
+	}
+	if got["DATABASE_URL"] != "postgres://u:p@h:5432/db" {
+		t.Errorf("created value not seen by the sops CLI: %q", got["DATABASE_URL"])
+	}
+}

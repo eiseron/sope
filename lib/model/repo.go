@@ -18,13 +18,44 @@ type SecretFile struct {
 
 type sopsConfigFile struct {
 	CreationRules []struct {
-		PathRegex string `yaml:"path_regex"`
+		PathRegex string        `yaml:"path_regex"`
+		Age       ageRecipients `yaml:"age"`
 	} `yaml:"creation_rules"`
 }
 
+type ageRecipients []string
+
+func (a *ageRecipients) UnmarshalYAML(value *yaml.Node) error {
+	var single string
+	if err := value.Decode(&single); err == nil {
+		*a = splitRecipients(single)
+		return nil
+	}
+	var list []string
+	if err := value.Decode(&list); err != nil {
+		return err
+	}
+	*a = list
+	return nil
+}
+
+func splitRecipients(raw string) []string {
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == '\n' || r == ' ' || r == '\t'
+	})
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 type creationRule struct {
-	dir string
-	re  *regexp.Regexp
+	dir        string
+	re         *regexp.Regexp
+	recipients []string
 }
 
 func DiscoverSecretFiles(root string) ([]SecretFile, error) {
@@ -98,7 +129,7 @@ func collectRules(root string) ([]creationRule, error) {
 			if cerr != nil {
 				continue
 			}
-			rules = append(rules, creationRule{dir: dir, re: re})
+			rules = append(rules, creationRule{dir: dir, re: re, recipients: cr.Age})
 		}
 		return nil
 	})
@@ -106,16 +137,21 @@ func collectRules(root string) ([]creationRule, error) {
 }
 
 func matchesAnyRule(rules []creationRule, path string) bool {
+	_, ok := matchRule(rules, path)
+	return ok
+}
+
+func matchRule(rules []creationRule, path string) (creationRule, bool) {
 	for _, r := range rules {
 		rel, err := filepath.Rel(r.dir, path)
 		if err != nil || strings.HasPrefix(rel, "..") {
 			continue
 		}
 		if r.re.MatchString(rel) || r.re.MatchString(path) {
-			return true
+			return r, true
 		}
 	}
-	return false
+	return creationRule{}, false
 }
 
 func isWithin(root, target string) bool {
