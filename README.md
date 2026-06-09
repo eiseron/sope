@@ -60,7 +60,19 @@ root. Open a file, paste your `AGE-SECRET-KEY-1...` into the unlock prompt, and
 the keys appear. A second file with the same recipient opens without asking
 again.
 
-Keys: `j`/`k` move, `enter` open, `r` reveal, `e` edit, `a` add, `d` delete,
+Press `n` in the file list to create a new file: type a name (the `.enc.env`
+extension is added automatically) and it is encrypted to the recipient
+configured in the matching `.sops.yaml` rule, then opened so you can add keys.
+
+If there is no `.sops.yaml` yet, that first `n` bootstraps one: `sope` generates
+a fresh age key, shows the secret key once for you to save, and on confirmation
+writes `.sops.yaml`, creates the file, and opens it. The secret is shown a
+single time and never written to disk, so copy it before confirming. There is
+no separate `init` command; the first file sets everything up.
+
+File list: `j`/`k` move, `enter` open, `n` new, `q` quit.
+
+Inside a file: `j`/`k` move, `r` reveal, `e` edit, `a` add, `d` delete,
 `s` shell, `esc` go back, `q` quit.
 
 ## Shell with the secrets loaded

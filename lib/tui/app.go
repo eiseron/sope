@@ -21,6 +21,8 @@ const (
 	screenEdit
 	screenAdd
 	screenDelete
+	screenNewFile
+	screenBootstrap
 )
 
 type Model struct {
@@ -43,6 +45,10 @@ type Model struct {
 	revealed  map[int]bool
 	editInput textinput.Model
 	addInput  textinput.Model
+	nameInput textinput.Model
+
+	genIdentity model.Identity
+	genPlan     model.NewFilePlan
 
 	status string
 	width  int
@@ -59,6 +65,8 @@ func New(root string) (Model, error) {
 	ti.Placeholder = "AGE-SECRET-KEY-1..."
 	add := textinput.New()
 	add.Placeholder = "KEY=value"
+	name := textinput.New()
+	name.Placeholder = "name (.enc.env added automatically)"
 	return Model{
 		root:      root,
 		keyring:   model.NewKeyring(),
@@ -66,6 +74,7 @@ func New(root string) (Model, error) {
 		input:     ti,
 		editInput: textinput.New(),
 		addInput:  add,
+		nameInput: name,
 		revealed:  map[int]bool{},
 	}, nil
 }
@@ -99,6 +108,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateAdd(msg)
 		case screenDelete:
 			return m.updateDelete(msg)
+		case screenNewFile:
+			return m.updateNewFile(msg)
+		case screenBootstrap:
+			return m.updateBootstrap(msg)
 		}
 	}
 	return m, nil
@@ -116,12 +129,126 @@ func (m Model) updateFiles(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.fileCur > 0 {
 			m.fileCur--
 		}
+	case "n":
+		m.nameInput.Reset()
+		m.nameInput.Focus()
+		m.status = ""
+		m.screen = screenNewFile
+		return m, textinput.Blink
 	case "enter":
 		if len(m.files) > 0 {
 			return m.openFile(m.files[m.fileCur]), nil
 		}
 	}
 	return m, nil
+}
+
+func (m Model) updateNewFile(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.nameInput.Reset()
+		m.status = ""
+		m.screen = screenFiles
+		return m, nil
+	case "enter":
+		return m.submitNewFile()
+	}
+	var cmd tea.Cmd
+	m.nameInput, cmd = m.nameInput.Update(msg)
+	return m, cmd
+}
+
+func (m Model) submitNewFile() (tea.Model, tea.Cmd) {
+	plan, err := model.PlanNewFile(m.root, m.nameInput.Value())
+	if err != nil {
+		m.status = err.Error()
+		return m, nil
+	}
+	if plan.Bootstrap {
+		id, err := model.GenerateIdentity()
+		if err != nil {
+			m.status = "error: " + err.Error()
+			return m, nil
+		}
+		m.genIdentity = id
+		m.genPlan = plan
+		m.status = ""
+		m.screen = screenBootstrap
+		return m, nil
+	}
+	ct, err := model.CreateFile(plan.Recipients, nil, time.Now())
+	if err != nil {
+		m.status = "error: " + err.Error()
+		return m, nil
+	}
+	if err := model.WriteNewFile(m.root, plan.File, ct); err != nil {
+		m.status = "error: " + err.Error()
+		return m, nil
+	}
+	files, err := model.DiscoverSecretFiles(m.root)
+	if err != nil {
+		m.status = "error: " + err.Error()
+		return m, nil
+	}
+	m.files = files
+	m.fileCur = fileIndex(files, plan.File.Rel)
+	m.nameInput.Reset()
+	return m.openFile(plan.File), nil
+}
+
+func (m Model) updateBootstrap(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.genIdentity = model.Identity{}
+		m.genPlan = model.NewFilePlan{}
+		m.status = ""
+		m.screen = screenFiles
+		return m, nil
+	case "y":
+		return m.confirmBootstrap()
+	}
+	return m, nil
+}
+
+func (m Model) confirmBootstrap() (tea.Model, tea.Cmd) {
+	sf := m.genPlan.File
+	if err := model.WriteBootstrap(m.root, m.genIdentity.Recipient, sf, nil, time.Now()); err != nil {
+		return m.abortBootstrap("error: " + err.Error()), nil
+	}
+	if err := m.keyring.Unlock(m.genIdentity.Secret); err != nil {
+		return m.abortBootstrap("error: " + err.Error()), nil
+	}
+	files, err := model.DiscoverSecretFiles(m.root)
+	if err != nil {
+		return m.abortBootstrap("error: " + err.Error()), nil
+	}
+	m.files = files
+	m.fileCur = fileIndex(files, sf.Rel)
+	m.genIdentity = model.Identity{}
+	m.genPlan = model.NewFilePlan{}
+	m.nameInput.Reset()
+	return m.openFile(sf), nil
+}
+
+func (m Model) abortBootstrap(status string) Model {
+	m.genIdentity = model.Identity{}
+	m.genPlan = model.NewFilePlan{}
+	m.status = status
+	m.screen = screenFiles
+	return m
+}
+
+func fileIndex(files []model.SecretFile, rel string) int {
+	for i, f := range files {
+		if f.Rel == rel {
+			return i
+		}
+	}
+	return 0
 }
 
 func (m Model) updateUnlock(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -349,6 +476,10 @@ func (m Model) View() string {
 		return m.viewAdd()
 	case screenDelete:
 		return m.viewDelete()
+	case screenNewFile:
+		return m.viewNewFile()
+	case screenBootstrap:
+		return m.viewBootstrap()
 	default:
 		return m.viewFiles()
 	}
@@ -370,7 +501,31 @@ func (m Model) viewFiles() string {
 	if m.status != "" {
 		b.WriteString("\n" + errStyle.Render(m.status) + "\n")
 	}
-	b.WriteString("\n" + helpStyle.Render("j/k move · enter open · q quit"))
+	b.WriteString("\n" + helpStyle.Render("j/k move · enter open · n new · q quit"))
+	return b.String()
+}
+
+func (m Model) viewNewFile() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("new file") + "\n\n")
+	b.WriteString(m.nameInput.View() + "\n")
+	if m.status != "" {
+		b.WriteString("\n" + errStyle.Render(m.status) + "\n")
+	}
+	b.WriteString("\n" + helpStyle.Render("enter create · esc cancel"))
+	return b.String()
+}
+
+func (m Model) viewBootstrap() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("new age key") + "\n\n")
+	b.WriteString("No .sops.yaml was found, so a new age key was generated for\n")
+	b.WriteString(m.genPlan.File.Rel + ".\n\n")
+	b.WriteString(errStyle.Render("Save this secret key now. It is shown once, is never written to") + "\n")
+	b.WriteString(errStyle.Render("disk, and cannot be recovered. Without it the file is unreadable.") + "\n\n")
+	b.WriteString("recipient: " + m.genIdentity.Recipient + "\n")
+	b.WriteString("secret:    " + m.genIdentity.Secret + "\n")
+	b.WriteString("\n" + helpStyle.Render("y I saved it, create the file · esc cancel"))
 	return b.String()
 }
 

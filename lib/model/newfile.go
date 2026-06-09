@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -85,6 +86,21 @@ func WriteNewFile(root string, sf SecretFile, data []byte) error {
 		return err
 	}
 	return f.Close()
+}
+
+func WriteBootstrap(root, recipient string, sf SecretFile, entries []Entry, now time.Time) error {
+	ct, err := CreateFile([]string{recipient}, entries, now)
+	if err != nil {
+		return err
+	}
+	if err := WriteNewFile(root, sf, ct); err != nil {
+		return err
+	}
+	if _, err := WriteDefaultConfig(root, recipient); err != nil {
+		_ = os.Remove(sf.Abs)
+		return err
+	}
+	return nil
 }
 
 func WriteDefaultConfig(root, recipient string) (string, error) {
