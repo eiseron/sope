@@ -74,6 +74,7 @@ binaries:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
   variables:
     GITLAB_TOKEN: $EISERON_STACK_TOKEN
+    GITHUB_TOKEN: ""
     GIT_DEPTH: "0"
   script:
     - goreleaser release --clean
