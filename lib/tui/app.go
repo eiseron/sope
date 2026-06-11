@@ -25,6 +25,7 @@ const (
 	screenNewFileKey
 	screenGenerate
 	screenPaste
+	screenReuse
 )
 
 type Model struct {
@@ -52,6 +53,7 @@ type Model struct {
 
 	genIdentity model.Identity
 	genPlan     model.NewFilePlan
+	reuseCur    int
 
 	status string
 	width  int
@@ -122,6 +124,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateGenerate(msg)
 		case screenPaste:
 			return m.updatePaste(msg)
+		case screenReuse:
+			return m.updateReuse(msg)
 		}
 	}
 	return m, nil
@@ -196,6 +200,39 @@ func (m Model) updateNewFileKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		m.screen = screenPaste
 		return m, textinput.Blink
+	case "r":
+		return m.startReuse()
+	}
+	return m, nil
+}
+
+func (m Model) startReuse() (tea.Model, tea.Cmd) {
+	if len(m.genPlan.ExistingRecipients) == 0 {
+		return m, nil
+	}
+	m.reuseCur = 0
+	m.status = ""
+	m.screen = screenReuse
+	return m, nil
+}
+
+func (m Model) updateReuse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	recipients := m.genPlan.ExistingRecipients
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		return m.clearNewFile(screenFiles), nil
+	case "j", "down":
+		if m.reuseCur < len(recipients)-1 {
+			m.reuseCur++
+		}
+	case "k", "up":
+		if m.reuseCur > 0 {
+			m.reuseCur--
+		}
+	case "enter":
+		return m.createWith([]string{recipients[m.reuseCur]})
 	}
 	return m, nil
 }
@@ -534,6 +571,8 @@ func (m Model) View() string {
 		return m.viewGenerate()
 	case screenPaste:
 		return m.viewPaste()
+	case screenReuse:
+		return m.viewReuse()
 	default:
 		return m.viewFiles()
 	}
@@ -575,10 +614,32 @@ func (m Model) viewNewFileKey() string {
 	b.WriteString(titleStyle.Render("key for "+m.genPlan.File.Rel) + "\n\n")
 	b.WriteString("g  generate a new age key for this file\n")
 	b.WriteString("p  paste an existing age recipient\n")
+	help := "g/p choose · esc cancel"
+	if len(m.genPlan.ExistingRecipients) > 0 {
+		b.WriteString("r  reuse a key already in .sops.yaml\n")
+		help = "g/p/r choose · esc cancel"
+	}
 	if m.status != "" {
 		b.WriteString("\n" + errStyle.Render(m.status) + "\n")
 	}
-	b.WriteString("\n" + helpStyle.Render("g/p choose · esc cancel"))
+	b.WriteString("\n" + helpStyle.Render(help))
+	return b.String()
+}
+
+func (m Model) viewReuse() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("reuse a key for "+m.genPlan.File.Rel) + "\n\n")
+	for i, recipient := range m.genPlan.ExistingRecipients {
+		cursor := "  "
+		if i == m.reuseCur {
+			cursor = cursorStyle.Render("> ")
+		}
+		b.WriteString(cursor + recipient + "\n")
+	}
+	if m.status != "" {
+		b.WriteString("\n" + errStyle.Render(m.status) + "\n")
+	}
+	b.WriteString("\n" + helpStyle.Render("j/k move · enter create · esc cancel"))
 	return b.String()
 }
 
