@@ -22,7 +22,9 @@ const (
 	screenAdd
 	screenDelete
 	screenNewFile
-	screenBootstrap
+	screenNewFileKey
+	screenGenerate
+	screenPaste
 )
 
 type Model struct {
@@ -38,14 +40,15 @@ type Model struct {
 	pendingCT []byte
 	unlockErr string
 
-	current   model.SecretFile
-	currentCT []byte
-	entries   []model.Entry
-	keyCur    int
-	revealed  map[int]bool
-	editInput textinput.Model
-	addInput  textinput.Model
-	nameInput textinput.Model
+	current    model.SecretFile
+	currentCT  []byte
+	entries    []model.Entry
+	keyCur     int
+	revealed   map[int]bool
+	editInput  textinput.Model
+	addInput   textinput.Model
+	nameInput  textinput.Model
+	recipInput textinput.Model
 
 	genIdentity model.Identity
 	genPlan     model.NewFilePlan
@@ -67,15 +70,18 @@ func New(root string) (Model, error) {
 	add.Placeholder = "KEY=value"
 	name := textinput.New()
 	name.Placeholder = "name (.enc.env added automatically)"
+	recip := textinput.New()
+	recip.Placeholder = "age1..."
 	return Model{
-		root:      root,
-		keyring:   model.NewKeyring(),
-		files:     files,
-		input:     ti,
-		editInput: textinput.New(),
-		addInput:  add,
-		nameInput: name,
-		revealed:  map[int]bool{},
+		root:       root,
+		keyring:    model.NewKeyring(),
+		files:      files,
+		input:      ti,
+		editInput:  textinput.New(),
+		addInput:   add,
+		nameInput:  name,
+		recipInput: recip,
+		revealed:   map[int]bool{},
 	}, nil
 }
 
@@ -110,8 +116,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateDelete(msg)
 		case screenNewFile:
 			return m.updateNewFile(msg)
-		case screenBootstrap:
-			return m.updateBootstrap(msg)
+		case screenNewFileKey:
+			return m.updateNewFileKey(msg)
+		case screenGenerate:
+			return m.updateGenerate(msg)
+		case screenPaste:
+			return m.updatePaste(msg)
 		}
 	}
 	return m, nil
@@ -166,79 +176,119 @@ func (m Model) submitNewFile() (tea.Model, tea.Cmd) {
 		m.status = err.Error()
 		return m, nil
 	}
-	if plan.Bootstrap {
-		id, err := model.GenerateIdentity()
-		if err != nil {
-			m.status = "error: " + err.Error()
-			return m, nil
-		}
-		m.genIdentity = id
-		m.genPlan = plan
-		m.status = ""
-		m.screen = screenBootstrap
-		return m, nil
-	}
-	ct, err := model.CreateFile(plan.Recipients, nil, time.Now())
-	if err != nil {
-		m.status = "error: " + err.Error()
-		return m, nil
-	}
-	if err := model.WriteNewFile(m.root, plan.File, ct); err != nil {
-		m.status = "error: " + err.Error()
-		return m, nil
-	}
-	files, err := model.DiscoverSecretFiles(m.root)
-	if err != nil {
-		m.status = "error: " + err.Error()
-		return m, nil
-	}
-	m.files = files
-	m.fileCur = fileIndex(files, plan.File.Rel)
-	m.nameInput.Reset()
-	return m.openFile(plan.File), nil
+	m.genPlan = plan
+	m.status = ""
+	m.screen = screenNewFileKey
+	return m, nil
 }
 
-func (m Model) updateBootstrap(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateNewFileKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "esc":
-		m.genIdentity = model.Identity{}
-		m.genPlan = model.NewFilePlan{}
+		return m.clearNewFile(screenFiles), nil
+	case "g":
+		return m.startGenerate()
+	case "p":
+		m.recipInput.Reset()
+		m.recipInput.Focus()
 		m.status = ""
-		m.screen = screenFiles
-		return m, nil
-	case "y":
-		return m.confirmBootstrap()
+		m.screen = screenPaste
+		return m, textinput.Blink
 	}
 	return m, nil
 }
 
-func (m Model) confirmBootstrap() (tea.Model, tea.Cmd) {
+func (m Model) startGenerate() (tea.Model, tea.Cmd) {
+	id, err := model.GenerateIdentity()
+	if err != nil {
+		return m.abortNewFile("error: " + err.Error()), nil
+	}
+	m.genIdentity = id
+	m.status = ""
+	m.screen = screenGenerate
+	return m, nil
+}
+
+func (m Model) updateGenerate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		return m.clearNewFile(screenFiles), nil
+	case "y":
+		return m.confirmGenerate()
+	}
+	return m, nil
+}
+
+func (m Model) confirmGenerate() (tea.Model, tea.Cmd) {
 	sf := m.genPlan.File
-	if err := model.WriteBootstrap(m.root, m.genIdentity.Recipient, sf, nil, time.Now()); err != nil {
-		return m.abortBootstrap("error: " + err.Error()), nil
+	if err := model.WriteNewSecretFile(m.root, sf, []string{m.genIdentity.Recipient}, nil, time.Now()); err != nil {
+		return m.abortNewFile("error: " + err.Error()), nil
 	}
 	if err := m.keyring.Unlock(m.genIdentity.Secret); err != nil {
-		return m.abortBootstrap("error: " + err.Error()), nil
+		return m.abortNewFile("error: " + err.Error()), nil
 	}
+	return m.finalizeNewFile(sf)
+}
+
+func (m Model) updatePaste(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		return m.clearNewFile(screenFiles), nil
+	case "enter":
+		return m.confirmPaste()
+	}
+	var cmd tea.Cmd
+	m.recipInput, cmd = m.recipInput.Update(msg)
+	return m, cmd
+}
+
+func (m Model) confirmPaste() (tea.Model, tea.Cmd) {
+	recipients, err := model.ParseRecipients(m.recipInput.Value())
+	if err != nil {
+		m.status = err.Error()
+		return m, nil
+	}
+	return m.createWith(recipients)
+}
+
+func (m Model) createWith(recipients []string) (tea.Model, tea.Cmd) {
+	sf := m.genPlan.File
+	if err := model.WriteNewSecretFile(m.root, sf, recipients, nil, time.Now()); err != nil {
+		return m.abortNewFile("error: " + err.Error()), nil
+	}
+	return m.finalizeNewFile(sf)
+}
+
+func (m Model) finalizeNewFile(sf model.SecretFile) (tea.Model, tea.Cmd) {
 	files, err := model.DiscoverSecretFiles(m.root)
 	if err != nil {
-		return m.abortBootstrap("error: " + err.Error()), nil
+		return m.abortNewFile("error: " + err.Error()), nil
 	}
 	m.files = files
 	m.fileCur = fileIndex(files, sf.Rel)
-	m.genIdentity = model.Identity{}
-	m.genPlan = model.NewFilePlan{}
-	m.nameInput.Reset()
+	m = m.clearNewFile(screenFiles)
 	return m.openFile(sf), nil
 }
 
-func (m Model) abortBootstrap(status string) Model {
+func (m Model) clearNewFile(s screen) Model {
 	m.genIdentity = model.Identity{}
 	m.genPlan = model.NewFilePlan{}
+	m.recipInput.Reset()
+	m.nameInput.Reset()
+	m.status = ""
+	m.screen = s
+	return m
+}
+
+func (m Model) abortNewFile(status string) Model {
+	m = m.clearNewFile(screenFiles)
 	m.status = status
-	m.screen = screenFiles
 	return m
 }
 
@@ -478,8 +528,12 @@ func (m Model) View() string {
 		return m.viewDelete()
 	case screenNewFile:
 		return m.viewNewFile()
-	case screenBootstrap:
-		return m.viewBootstrap()
+	case screenNewFileKey:
+		return m.viewNewFileKey()
+	case screenGenerate:
+		return m.viewGenerate()
+	case screenPaste:
+		return m.viewPaste()
 	default:
 		return m.viewFiles()
 	}
@@ -516,16 +570,38 @@ func (m Model) viewNewFile() string {
 	return b.String()
 }
 
-func (m Model) viewBootstrap() string {
+func (m Model) viewNewFileKey() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("key for "+m.genPlan.File.Rel) + "\n\n")
+	b.WriteString("g  generate a new age key for this file\n")
+	b.WriteString("p  paste an existing age recipient\n")
+	if m.status != "" {
+		b.WriteString("\n" + errStyle.Render(m.status) + "\n")
+	}
+	b.WriteString("\n" + helpStyle.Render("g/p choose · esc cancel"))
+	return b.String()
+}
+
+func (m Model) viewGenerate() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("new age key") + "\n\n")
-	b.WriteString("No .sops.yaml was found, so a new age key was generated for\n")
-	b.WriteString(m.genPlan.File.Rel + ".\n\n")
+	b.WriteString("A new age key was generated for " + m.genPlan.File.Rel + ".\n\n")
 	b.WriteString(errStyle.Render("Save this secret key now. It is shown once, is never written to") + "\n")
 	b.WriteString(errStyle.Render("disk, and cannot be recovered. Without it the file is unreadable.") + "\n\n")
 	b.WriteString("recipient: " + m.genIdentity.Recipient + "\n")
 	b.WriteString("secret:    " + m.genIdentity.Secret + "\n")
 	b.WriteString("\n" + helpStyle.Render("y I saved it, create the file · esc cancel"))
+	return b.String()
+}
+
+func (m Model) viewPaste() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("paste recipient for "+m.genPlan.File.Rel) + "\n\n")
+	b.WriteString("age recipient:\n" + m.recipInput.View() + "\n")
+	if m.status != "" {
+		b.WriteString("\n" + errStyle.Render(m.status) + "\n")
+	}
+	b.WriteString("\n" + helpStyle.Render("enter create · esc cancel"))
 	return b.String()
 }
 

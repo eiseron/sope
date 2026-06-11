@@ -38,31 +38,47 @@ func newFileRoot(t *testing.T) string {
 	return newFileRootRule(t, `\.enc\.env$`)
 }
 
-func TestNewFileCreatesEncryptedFileForExistingRecipient(t *testing.T) {
-	root := newFileRoot(t)
-	m, err := New(root)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if len(m.files) != 0 {
-		t.Fatalf("expected an empty root, found %d files", len(m.files))
-	}
-
+func atKeyChoice(t *testing.T, m Model, name string) Model {
+	t.Helper()
 	m = step(t, m, key('n'))
 	if m.screen != screenNewFile {
 		t.Fatalf("expected new-file screen, got %v", m.screen)
 	}
-	m.nameInput.SetValue("api")
+	m.nameInput.SetValue(name)
+	m = step(t, m, enter())
+	if m.screen != screenNewFileKey {
+		t.Fatalf("expected the key-choice screen, got %v", m.screen)
+	}
+	return m
+}
+
+func TestNewFilePasteCreatesEncryptedFileForRecipient(t *testing.T) {
+	root := t.TempDir()
+	m, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	m = atKeyChoice(t, m, "api")
+	m = step(t, m, key('p'))
+	if m.screen != screenPaste {
+		t.Fatalf("expected the paste screen, got %v", m.screen)
+	}
+	m.recipInput.SetValue(fixtureRecipient(t))
 	m = step(t, m, enter())
 
 	if _, err := os.Stat(filepath.Join(root, "api.enc.env")); err != nil {
 		t.Fatalf("expected api.enc.env on disk: %v", err)
 	}
-	if len(m.files) != 1 || m.files[0].Rel != "api.enc.env" {
-		t.Fatalf("new file not listed: %#v", m.files)
+	cfg, err := os.ReadFile(filepath.Join(root, ".sops.yaml"))
+	if err != nil {
+		t.Fatalf("reading .sops.yaml: %v", err)
+	}
+	if !strings.Contains(string(cfg), `^api\.enc\.env$`) {
+		t.Fatalf(".sops.yaml missing a file-specific rule:\n%s", cfg)
 	}
 	if m.screen != screenUnlock {
-		t.Fatalf("expected unlock prompt for the new file, got %v", m.screen)
+		t.Fatalf("expected an unlock prompt for the pasted recipient, got %v", m.screen)
 	}
 
 	m.input.SetValue(identity(t))
@@ -75,15 +91,41 @@ func TestNewFileCreatesEncryptedFileForExistingRecipient(t *testing.T) {
 	}
 }
 
-func TestNewFileAddsCanonicalExtensionToTypedName(t *testing.T) {
-	root := newFileRoot(t)
+func TestNewFilePasteRejectsInvalidRecipient(t *testing.T) {
+	root := t.TempDir()
 	m, err := New(root)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	m = step(t, m, key('n'))
-	m.nameInput.SetValue("ops/db")
+
+	m = atKeyChoice(t, m, "api")
+	m = step(t, m, key('p'))
+	m.recipInput.SetValue("not-a-real-recipient")
 	m = step(t, m, enter())
+
+	if m.screen != screenPaste {
+		t.Fatalf("expected to stay on the paste screen, got %v", m.screen)
+	}
+	if m.status == "" {
+		t.Fatal("expected an error status for an invalid recipient")
+	}
+	if _, err := os.Stat(filepath.Join(root, "api.enc.env")); !os.IsNotExist(err) {
+		t.Fatal("a file was created from an invalid recipient")
+	}
+}
+
+func TestNewFileGenerateAddsCanonicalExtensionToTypedName(t *testing.T) {
+	root := t.TempDir()
+	m, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m = atKeyChoice(t, m, "ops/db")
+	m = step(t, m, key('g'))
+	if m.screen != screenGenerate {
+		t.Fatalf("expected the generate screen, got %v", m.screen)
+	}
+	step(t, m, key('y'))
 
 	if _, err := os.Stat(filepath.Join(root, "ops", "db.enc.env")); err != nil {
 		t.Fatalf("expected ops/db.enc.env created with parent dir: %v", err)
@@ -111,24 +153,18 @@ func TestNewFileRejectsInvalidNameAndCreatesNothing(t *testing.T) {
 	}
 }
 
-func TestNewFileRejectsNameMatchingNoRule(t *testing.T) {
+func TestNewFileAllowsNameMatchingNoExistingRule(t *testing.T) {
 	root := newFileRootRule(t, `secrets\.enc\.env$`)
 	m, err := New(root)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	m = step(t, m, key('n'))
-	m.nameInput.SetValue("random")
-	m = step(t, m, enter())
+	m = atKeyChoice(t, m, "random")
+	m = step(t, m, key('g'))
+	step(t, m, key('y'))
 
-	if m.screen != screenNewFile {
-		t.Fatalf("expected to stay on the new-file screen, got %v", m.screen)
-	}
-	if m.status == "" {
-		t.Fatal("expected an error when the name matches no creation rule")
-	}
-	if _, err := os.Stat(filepath.Join(root, "random.enc.env")); !os.IsNotExist(err) {
-		t.Fatal("an unmatched file was created")
+	if _, err := os.Stat(filepath.Join(root, "random.enc.env")); err != nil {
+		t.Fatalf("expected random.enc.env to be created for a non-matching name: %v", err)
 	}
 }
 
@@ -169,5 +205,25 @@ func TestNewFileEscapeReturnsToFileList(t *testing.T) {
 	}
 	if m.nameInput.Value() != "" {
 		t.Fatalf("expected the name input to be cleared, got %q", m.nameInput.Value())
+	}
+}
+
+func TestNewFileKeyChoiceEscapeReturnsToFileList(t *testing.T) {
+	root := newFileRoot(t)
+	m, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m = atKeyChoice(t, m, "api")
+	m = step(t, m, esc())
+
+	if m.screen != screenFiles {
+		t.Fatalf("expected to return to the file list, got %v", m.screen)
+	}
+	if m.nameInput.Value() != "" {
+		t.Fatalf("expected the name input to be cleared, got %q", m.nameInput.Value())
+	}
+	if _, err := os.Stat(filepath.Join(root, "api.enc.env")); !os.IsNotExist(err) {
+		t.Fatal("a file was created despite cancelling at the key choice")
 	}
 }

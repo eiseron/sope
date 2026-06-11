@@ -27,6 +27,13 @@ func TestE2ENewFileCreateUnlockAddSaveQuit(t *testing.T) {
 
 	tm.Type("api")
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	waitForOutput(t, tm, "key for api.enc.env")
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	waitForOutput(t, tm, "paste recipient")
+
+	tm.Type(fixtureRecipient(t))
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 	waitForOutput(t, tm, "unlock api.enc.env")
 
 	tm.Type(identity(t))

@@ -5,6 +5,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/charmbracelet/x/exp/teatest"
 )
 
-func TestE2EBootstrapFirstFileCreatesConfigAndFile(t *testing.T) {
+func TestE2EGenerateFirstFileCreatesConfigAndFile(t *testing.T) {
 	root := t.TempDir()
 	m, err := New(root)
 	if err != nil {
@@ -27,6 +28,9 @@ func TestE2EBootstrapFirstFileCreatesConfigAndFile(t *testing.T) {
 
 	tm.Type("secrets")
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	waitForOutput(t, tm, "key for secrets.enc.env")
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
 	waitForOutput(t, tm, "Save this secret key")
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
@@ -35,10 +39,14 @@ func TestE2EBootstrapFirstFileCreatesConfigAndFile(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	tm.WaitFinished(t, teatest.WithFinalTimeout(5*time.Second))
 
-	if _, err := os.Stat(filepath.Join(root, ".sops.yaml")); err != nil {
-		t.Fatalf("bootstrap did not write .sops.yaml: %v", err)
+	cfg, err := os.ReadFile(filepath.Join(root, ".sops.yaml"))
+	if err != nil {
+		t.Fatalf("generate did not write .sops.yaml: %v", err)
+	}
+	if !strings.Contains(string(cfg), `^secrets\.enc\.env$`) {
+		t.Fatalf(".sops.yaml missing the file-specific rule:\n%s", cfg)
 	}
 	if _, err := os.Stat(filepath.Join(root, "secrets.enc.env")); err != nil {
-		t.Fatalf("bootstrap did not write the secret file: %v", err)
+		t.Fatalf("generate did not write the secret file: %v", err)
 	}
 }

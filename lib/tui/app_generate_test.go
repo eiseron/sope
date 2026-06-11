@@ -9,24 +9,23 @@ import (
 	"github.com/eiseron/sope/lib/model"
 )
 
-func atBootstrap(t *testing.T, root string) Model {
+func atGenerate(t *testing.T, root string) Model {
 	t.Helper()
 	m, err := New(root)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	m = step(t, m, key('n'))
-	m.nameInput.SetValue("secrets")
-	m = step(t, m, enter())
-	if m.screen != screenBootstrap {
-		t.Fatalf("expected bootstrap screen, got %v", m.screen)
+	m = atKeyChoice(t, m, "secrets")
+	m = step(t, m, key('g'))
+	if m.screen != screenGenerate {
+		t.Fatalf("expected the generate screen, got %v", m.screen)
 	}
 	return m
 }
 
-func TestBootstrapGeneratesKeyButWritesNothingUntilConfirmed(t *testing.T) {
+func TestGenerateShowsKeyButWritesNothingUntilConfirmed(t *testing.T) {
 	root := t.TempDir()
-	m := atBootstrap(t, root)
+	m := atGenerate(t, root)
 
 	if !strings.HasPrefix(m.genIdentity.Secret, "AGE-SECRET-KEY-1") {
 		t.Fatalf("no age secret generated: %q", m.genIdentity.Secret)
@@ -39,9 +38,9 @@ func TestBootstrapGeneratesKeyButWritesNothingUntilConfirmed(t *testing.T) {
 	}
 }
 
-func TestBootstrapConfirmCreatesConfigAndFileOpenableByShownSecret(t *testing.T) {
+func TestGenerateConfirmCreatesSpecificRuleAndFileOpenableByShownSecret(t *testing.T) {
 	root := t.TempDir()
-	m := atBootstrap(t, root)
+	m := atGenerate(t, root)
 	secret := m.genIdentity.Secret
 	recipient := m.genIdentity.Recipient
 
@@ -60,6 +59,9 @@ func TestBootstrapConfirmCreatesConfigAndFileOpenableByShownSecret(t *testing.T)
 	}
 	if !strings.Contains(string(cfg), recipient) {
 		t.Fatalf(".sops.yaml is missing the recipient:\n%s", cfg)
+	}
+	if !strings.Contains(string(cfg), `^secrets\.enc\.env$`) {
+		t.Fatalf(".sops.yaml is missing the file-specific rule:\n%s", cfg)
 	}
 
 	sf := model.SecretFile{Abs: filepath.Join(root, "secrets.enc.env"), Rel: "secrets.enc.env"}
@@ -84,9 +86,43 @@ func TestBootstrapConfirmCreatesConfigAndFileOpenableByShownSecret(t *testing.T)
 	}
 }
 
-func TestBootstrapCancelWritesNothing(t *testing.T) {
+func TestGenerateDistinctKeysPerFileDoNotCrossDecrypt(t *testing.T) {
 	root := t.TempDir()
-	m := atBootstrap(t, root)
+
+	first := atGenerate(t, root)
+	firstSecret := first.genIdentity.Secret
+	step(t, first, key('y'))
+
+	second, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	second = atKeyChoice(t, second, "other")
+	second = step(t, second, key('g'))
+	secondRecipient := second.genIdentity.Recipient
+	step(t, second, key('y'))
+
+	if firstSecret == "" || secondRecipient == "" {
+		t.Fatal("expected two distinct generated identities")
+	}
+
+	sf := model.SecretFile{Abs: filepath.Join(root, "other.enc.env"), Rel: "other.enc.env"}
+	ct, err := model.ReadCiphertext(root, sf)
+	if err != nil {
+		t.Fatalf("read ciphertext: %v", err)
+	}
+	k := model.NewKeyring()
+	if err := k.Unlock(firstSecret); err != nil {
+		t.Fatalf("unlock with the first secret: %v", err)
+	}
+	if _, err := k.DecryptFile(ct); err == nil {
+		t.Fatal("the first file's key must not decrypt the second file")
+	}
+}
+
+func TestGenerateCancelWritesNothing(t *testing.T) {
+	root := t.TempDir()
+	m := atGenerate(t, root)
 
 	m = step(t, m, esc())
 
@@ -104,15 +140,15 @@ func TestBootstrapCancelWritesNothing(t *testing.T) {
 	}
 }
 
-func TestBootstrapIgnoresStrayKeysAndKeepsSecretVisible(t *testing.T) {
+func TestGenerateIgnoresStrayKeysAndKeepsSecretVisible(t *testing.T) {
 	root := t.TempDir()
-	m := atBootstrap(t, root)
+	m := atGenerate(t, root)
 	secret := m.genIdentity.Secret
 
 	m = step(t, m, key('x'))
 
-	if m.screen != screenBootstrap {
-		t.Fatalf("a stray key left the bootstrap screen: %v", m.screen)
+	if m.screen != screenGenerate {
+		t.Fatalf("a stray key left the generate screen: %v", m.screen)
 	}
 	if m.genIdentity.Secret != secret {
 		t.Fatal("a stray key discarded the generated secret")

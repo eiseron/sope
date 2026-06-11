@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
 func writeSops(t *testing.T, dir, body string) {
@@ -14,7 +16,9 @@ func writeSops(t *testing.T, dir, body string) {
 	}
 }
 
-const canonicalSops = "creation_rules:\n  - path_regex: \\.enc\\.env$\n    age: age1lgutd6s2dqaze2j8w97cq44623vt5d9u9433h26988tun7yl09cqrsvnf3\n"
+const canonicalRecipient = "age1lgutd6s2dqaze2j8w97cq44623vt5d9u9433h26988tun7yl09cqrsvnf3"
+
+const canonicalSops = "creation_rules:\n  - path_regex: \\.enc\\.env$\n    age: " + canonicalRecipient + "\n"
 
 func TestPlanNewFileAppendsCanonicalExtension(t *testing.T) {
 	dir := t.TempDir()
@@ -27,11 +31,8 @@ func TestPlanNewFileAppendsCanonicalExtension(t *testing.T) {
 	if plan.File.Rel != "secrets.enc.env" {
 		t.Fatalf("expected extension appended, got %q", plan.File.Rel)
 	}
-	if plan.Bootstrap {
-		t.Fatal("expected reuse, not bootstrap, when a rule already exists")
-	}
-	if want := []string{"age1lgutd6s2dqaze2j8w97cq44623vt5d9u9433h26988tun7yl09cqrsvnf3"}; !reflect.DeepEqual(plan.Recipients, want) {
-		t.Fatalf("recipients\n got: %#v\nwant: %#v", plan.Recipients, want)
+	if want := []string{canonicalRecipient}; !reflect.DeepEqual(plan.ExistingRecipients, want) {
+		t.Fatalf("existing recipients\n got: %#v\nwant: %#v", plan.ExistingRecipients, want)
 	}
 }
 
@@ -48,41 +49,34 @@ func TestPlanNewFileKeepsNameThatAlreadyMatches(t *testing.T) {
 	}
 }
 
-func TestPlanNewFileBootstrapsWhenNoRulesExist(t *testing.T) {
+func TestPlanNewFileReportsNoRecipientsWhenNoConfig(t *testing.T) {
 	dir := t.TempDir()
 
 	plan, err := PlanNewFile(dir, "secrets")
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	if !plan.Bootstrap {
-		t.Fatal("expected bootstrap when no .sops.yaml exists")
-	}
-	if len(plan.Recipients) != 0 {
-		t.Fatalf("expected no recipients before bootstrap, got %#v", plan.Recipients)
+	if len(plan.ExistingRecipients) != 0 {
+		t.Fatalf("expected no recipients without a config, got %#v", plan.ExistingRecipients)
 	}
 	if plan.File.Rel != "secrets.enc.env" {
 		t.Fatalf("expected canonical extension, got %q", plan.File.Rel)
 	}
 }
 
-func TestPlanNewFileRejectsNameMatchingNoRule(t *testing.T) {
+func TestPlanNewFileAllowsNameMatchingNoExistingRule(t *testing.T) {
 	dir := t.TempDir()
-	writeSops(t, dir, "creation_rules:\n  - path_regex: secrets\\.enc\\.env$\n    age: age1lgutd6s2dqaze2j8w97cq44623vt5d9u9433h26988tun7yl09cqrsvnf3\n")
+	writeSops(t, dir, "creation_rules:\n  - path_regex: secrets\\.enc\\.env$\n    age: "+canonicalRecipient+"\n")
 
-	_, err := PlanNewFile(dir, "unmatched")
-	if err == nil {
-		t.Fatal("expected an error for a name no creation rule matches")
+	plan, err := PlanNewFile(dir, "unmatched")
+	if err != nil {
+		t.Fatalf("expected a name not matching any rule to be allowed: %v", err)
 	}
-}
-
-func TestPlanNewFileRejectsRuleWithoutRecipients(t *testing.T) {
-	dir := t.TempDir()
-	writeSops(t, dir, "creation_rules:\n  - path_regex: \\.enc\\.env$\n")
-
-	_, err := PlanNewFile(dir, "secrets")
-	if err == nil {
-		t.Fatal("expected an error when the matching rule has no age recipients")
+	if plan.File.Rel != "unmatched.enc.env" {
+		t.Fatalf("unexpected file %q", plan.File.Rel)
+	}
+	if want := []string{canonicalRecipient}; !reflect.DeepEqual(plan.ExistingRecipients, want) {
+		t.Fatalf("existing recipients\n got: %#v\nwant: %#v", plan.ExistingRecipients, want)
 	}
 }
 
@@ -120,6 +114,63 @@ func TestPlanNewFileRejectsInvalidNames(t *testing.T) {
 	}
 }
 
+func TestWriteNewSecretFileCreatesOpenableFileAndSpecificRule(t *testing.T) {
+	root := t.TempDir()
+	id, err := GenerateIdentity()
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	sf := SecretFile{Abs: filepath.Join(root, "secrets.enc.env"), Rel: "secrets.enc.env"}
+
+	if err := WriteNewSecretFile(root, sf, []string{id.Recipient}, nil, time.Date(2026, 6, 11, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	cfg, err := os.ReadFile(filepath.Join(root, ".sops.yaml"))
+	if err != nil {
+		t.Fatalf("reading .sops.yaml: %v", err)
+	}
+	if want := `path_regex: ^secrets\.enc\.env$`; !strings.Contains(string(cfg), want) {
+		t.Fatalf(".sops.yaml missing a file-specific rule %q:\n%s", want, cfg)
+	}
+
+	ct, err := ReadCiphertext(root, sf)
+	if err != nil {
+		t.Fatalf("read ciphertext: %v", err)
+	}
+	k := NewKeyring()
+	if err := k.Unlock(id.Secret); err != nil {
+		t.Fatalf("unlock: %v", err)
+	}
+	entries, err := k.DecryptFile(ct)
+	if err != nil {
+		t.Fatalf("decrypt: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected an empty file, got %d entries", len(entries))
+	}
+}
+
+func TestWriteNewSecretFileCleansUpFileWhenRuleWriteFails(t *testing.T) {
+	root := t.TempDir()
+	const malformed = "creation_rules: : :\n"
+	if err := os.WriteFile(filepath.Join(root, ".sops.yaml"), []byte(malformed), 0o644); err != nil {
+		t.Fatalf("seed malformed config: %v", err)
+	}
+	id, err := GenerateIdentity()
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	sf := SecretFile{Abs: filepath.Join(root, "secrets.enc.env"), Rel: "secrets.enc.env"}
+
+	if err := WriteNewSecretFile(root, sf, []string{id.Recipient}, nil, time.Date(2026, 6, 11, 0, 0, 0, 0, time.UTC)); err == nil {
+		t.Fatal("expected a failure when the config is malformed")
+	}
+	if _, statErr := os.Stat(sf.Abs); !os.IsNotExist(statErr) {
+		t.Fatalf("the secret file was left behind after a failed write: %v", statErr)
+	}
+}
+
 func TestWriteNewFileRefusesToOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	sf := SecretFile{Abs: filepath.Join(dir, "secrets.enc.env"), Rel: "secrets.enc.env"}
@@ -151,36 +202,5 @@ func TestWriteNewFileRefusesOutsideRoot(t *testing.T) {
 	sf := SecretFile{Abs: filepath.Join(dir, "..", "escape.enc.env"), Rel: "../escape.enc.env"}
 	if err := WriteNewFile(dir, sf, []byte("data")); err == nil {
 		t.Fatal("expected a refusal to write outside the root")
-	}
-}
-
-func TestWriteDefaultConfigIsDiscoverableAndRefusesOverwrite(t *testing.T) {
-	dir := t.TempDir()
-	id, err := GenerateIdentity()
-	if err != nil {
-		t.Fatalf("generate: %v", err)
-	}
-
-	regex, err := WriteDefaultConfig(dir, id.Recipient)
-	if err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	if regex != defaultPathRegex {
-		t.Fatalf("unexpected regex %q", regex)
-	}
-
-	plan, err := PlanNewFile(dir, "secrets")
-	if err != nil {
-		t.Fatalf("plan after config write: %v", err)
-	}
-	if plan.Bootstrap {
-		t.Fatal("config write should have removed the need to bootstrap")
-	}
-	if want := []string{id.Recipient}; !reflect.DeepEqual(plan.Recipients, want) {
-		t.Fatalf("recipients\n got: %#v\nwant: %#v", plan.Recipients, want)
-	}
-
-	if _, err := WriteDefaultConfig(dir, id.Recipient); err == nil {
-		t.Fatal("expected a refusal to overwrite an existing .sops.yaml")
 	}
 }

@@ -8,15 +8,11 @@ import (
 	"time"
 )
 
-const (
-	fileExt          = ".enc.env"
-	defaultPathRegex = `\.enc\.env$`
-)
+const fileExt = ".enc.env"
 
 type NewFilePlan struct {
-	File       SecretFile
-	Recipients []string
-	Bootstrap  bool
+	File               SecretFile
+	ExistingRecipients []string
 }
 
 func PlanNewFile(root, name string) (NewFilePlan, error) {
@@ -28,30 +24,7 @@ func PlanNewFile(root, name string) (NewFilePlan, error) {
 	if err != nil {
 		return NewFilePlan{}, err
 	}
-	rules, err := collectRules(absRoot)
-	if err != nil {
-		return NewFilePlan{}, err
-	}
-
-	var chosen string
-	var recipients []string
-	bootstrap := false
-
-	if len(rules) == 0 {
-		chosen = ensureExt(rel)
-		bootstrap = true
-	} else {
-		rule, candidate, ok := matchAgainstRules(rules, absRoot, rel)
-		if !ok {
-			return NewFilePlan{}, fmt.Errorf("name %q matches no creation rule (expected %s)", rel, ruleRegexes(rules))
-		}
-		if len(rule.recipients) == 0 {
-			return NewFilePlan{}, fmt.Errorf("creation rule matching %q has no age recipients", candidate)
-		}
-		chosen = candidate
-		recipients = rule.recipients
-	}
-
+	chosen := ensureExt(rel)
 	abs := filepath.Join(absRoot, chosen)
 	if !isWithin(absRoot, abs) {
 		return NewFilePlan{}, fmt.Errorf("refusing to create path outside root: %s", abs)
@@ -62,11 +35,13 @@ func PlanNewFile(root, name string) (NewFilePlan, error) {
 	case !os.IsNotExist(err):
 		return NewFilePlan{}, err
 	}
-
+	recipients, err := CollectRecipients(absRoot)
+	if err != nil {
+		return NewFilePlan{}, err
+	}
 	return NewFilePlan{
-		File:       SecretFile{Abs: abs, Rel: chosen},
-		Recipients: recipients,
-		Bootstrap:  bootstrap,
+		File:               SecretFile{Abs: abs, Rel: chosen},
+		ExistingRecipients: recipients,
 	}, nil
 }
 
@@ -88,36 +63,19 @@ func WriteNewFile(root string, sf SecretFile, data []byte) error {
 	return f.Close()
 }
 
-func WriteBootstrap(root, recipient string, sf SecretFile, entries []Entry, now time.Time) error {
-	ct, err := CreateFile([]string{recipient}, entries, now)
+func WriteNewSecretFile(root string, sf SecretFile, recipients []string, entries []Entry, now time.Time) error {
+	ct, err := CreateFile(recipients, entries, now)
 	if err != nil {
 		return err
 	}
 	if err := WriteNewFile(root, sf, ct); err != nil {
 		return err
 	}
-	if _, err := WriteDefaultConfig(root, recipient); err != nil {
+	if err := EnsureCreationRule(root, FileRuleRegex(sf.Rel), recipients); err != nil {
 		_ = os.Remove(sf.Abs)
 		return err
 	}
 	return nil
-}
-
-func WriteDefaultConfig(root, recipient string) (string, error) {
-	abs := filepath.Join(root, ".sops.yaml")
-	f, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		return "", err
-	}
-	content := fmt.Sprintf("creation_rules:\n  - path_regex: %s\n    age: %s\n", defaultPathRegex, recipient)
-	if _, err := f.WriteString(content); err != nil {
-		_ = f.Close()
-		return "", err
-	}
-	if err := f.Close(); err != nil {
-		return "", err
-	}
-	return defaultPathRegex, nil
 }
 
 func cleanName(name string) (string, error) {
@@ -146,29 +104,4 @@ func ensureExt(rel string) string {
 		return rel
 	}
 	return rel + fileExt
-}
-
-func matchAgainstRules(rules []creationRule, root, rel string) (creationRule, string, bool) {
-	for _, candidate := range candidateNames(rel) {
-		if rule, ok := matchRule(rules, filepath.Join(root, candidate)); ok {
-			return rule, candidate, true
-		}
-	}
-	return creationRule{}, "", false
-}
-
-func candidateNames(rel string) []string {
-	withExt := ensureExt(rel)
-	if withExt == rel {
-		return []string{rel}
-	}
-	return []string{rel, withExt}
-}
-
-func ruleRegexes(rules []creationRule) string {
-	out := make([]string, 0, len(rules))
-	for _, r := range rules {
-		out = append(out, r.re.String())
-	}
-	return strings.Join(out, ", ")
 }
