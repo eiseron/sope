@@ -1,6 +1,7 @@
 /bin/
 /dist/
 /sope
+/.cache/
 *.test
 *.out
 .claude/

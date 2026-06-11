@@ -12,10 +12,10 @@ test:
 	$(DEV) go test ./... -race
 
 integration:
-	$(DEV) sh -c 'sh scripts/install-sops-age.sh && go test -tags=integration ./...'
+	$(DEV) sh -c 'BIN_DIR=/src/.cache/bin sh scripts/install-sops-age.sh && PATH=/src/.cache/bin:$$PATH go test -tags=integration ./...'
 
 lint:
-	$(DEV) sh -c 'test -z "$$(gofmt -l .)" || { echo "gofmt:"; gofmt -l .; exit 1; }'
+	$(DEV) sh -c 'out=$$(find . -path ./.cache -prune -o -name "*.go" -print | xargs gofmt -l); test -z "$$out" || { echo "gofmt:"; echo "$$out"; exit 1; }'
 	$(DEV) go vet ./...
 
 fmt:

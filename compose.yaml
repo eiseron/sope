@@ -3,14 +3,13 @@ name: sope
 services:
   dev:
     image: golang:1.25
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     working_dir: /src
     environment:
       GOFLAGS: -mod=mod -buildvcs=false
       GOTOOLCHAIN: local
+      GOPATH: /src/.cache/go
+      GOCACHE: /src/.cache/go-build
       SHELL: /bin/bash
     volumes:
       - .:/src
-      - go-cache:/go
-
-volumes:
-  go-cache:
